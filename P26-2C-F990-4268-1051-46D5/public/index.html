@@ -3,48 +3,67 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Projeto #12 — P26-2C-F990-4268-1051-46D5</title>
+  <title>Notas acadêmicas em Markdown</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <header class="topbar">
-    <div class="topbar-inner">
-      <div>
-        <strong>Projeto #12: Bloco de Notas em Markdown com Tags</strong>
-      </div>
-      <div class="discord-badge" id="discordProfile">
-        <a id="discordLoginLink" href="/api/auth/discord" style="color:inherit;text-decoration:none;">
-          <span id="discordUserText">Entrar com Discord OAuth2</span>
-        </a>
-      </div>
-    </div>
+    <a class="brand" href="/">Notas acadêmicas</a>
+    <div class="session" id="session"></div>
   </header>
 
-  <main>
-    <section class="card">
-      <span class="pill">Projeto Oficial #12</span>
-      <h1>Bloco de Notas em Markdown com Tags</h1>
-      <p class="desc">Crie um ambiente de anotações acadêmicas no qual o usuário escreve em sintaxe Markdown básica em um painel à esquerda e visualiza a renderização HTML simultaneamente à direita. O interpretador de expressões regulares para converter cabeçalhos, listas, negrito e blocos de código deve ser escrito em JavaScript vanilla. Mediante login pelo Discord, o estudante pode salvar suas notas no Cloudflare D1, atribuindo múltiplas etiquetas (tags) a cada documento. O sistema deve oferecer uma barra de pesquisa rápida e filtragem por tags que consulta os endpoints serverless na Cloudflare, permitindo organizar, editar e excluir anotações persistidas na nuvem.</p>
-
-      <div class="form-row">
-        <input class="input-text" id="recordInput" type="text" placeholder="Digite um registro para gravar na Cloudflare Function + D1...">
-        <button class="btn-primary" id="sendBtn" type="button">Registrar no Cloudflare D1</button>
+  <div class="shell">
+    <aside class="library" aria-label="Biblioteca de notas">
+      <div class="guest" id="guestBox" hidden>
+        <h2>Guarde suas notas na nuvem</h2>
+        <p>Entre com o Discord para salvar, buscar e organizar suas anotações com tags. O editor ao lado já funciona sem login.</p>
+        <a class="btn primary" href="/api/auth/discord">Entrar com Discord</a>
       </div>
-      <div id="statusMessage" style="font-size:0.88rem;font-weight:700;color:#166534;margin-bottom:0.75rem;"></div>
-    </section>
 
-    <section class="card">
-      <h2 style="font-size:1.15rem;font-weight:800;margin-bottom:0.85rem;">Registros Persistidos (Cloudflare Pages Functions + D1)</h2>
-      <ul class="records-list" id="recordsList">
-        <li>Carregando status da API serverless...</li>
-      </ul>
-    </section>
-  </main>
+      <div class="tools" id="libraryTools" hidden>
+        <button class="btn primary block" id="newBtn" type="button">Nova nota</button>
+        <label class="sr-only" for="searchInput">Buscar notas</label>
+        <input class="field" id="searchInput" type="search" placeholder="Buscar por título, texto ou tag" autocomplete="off">
+        <div class="chips" id="tagFilter" role="group" aria-label="Filtrar por tag"></div>
+        <ul class="note-list" id="noteList"></ul>
+      </div>
+    </aside>
+
+    <main class="workspace">
+      <div class="meta">
+        <label class="sr-only" for="titleInput">Título da nota</label>
+        <input class="field title" id="titleInput" type="text" maxlength="120" placeholder="Título da nota" autocomplete="off">
+        <div class="tag-editor" id="tagEditor">
+          <ul class="chips" id="draftTags" aria-label="Tags da nota"></ul>
+          <label class="sr-only" for="tagInput">Adicionar tag</label>
+          <input class="tag-input" id="tagInput" type="text" placeholder="Adicionar tag e pressionar Enter" autocomplete="off">
+        </div>
+      </div>
+
+      <div class="panes">
+        <section class="pane">
+          <h2 class="pane-title">Markdown</h2>
+          <textarea class="editor" id="editor" spellcheck="false" aria-label="Texto em Markdown"></textarea>
+        </section>
+        <section class="pane">
+          <h2 class="pane-title">Pré-visualização</h2>
+          <article class="sheet" id="preview" aria-live="polite"></article>
+        </section>
+      </div>
+
+      <div class="actions">
+        <button class="btn primary" id="saveBtn" type="button">Salvar nota</button>
+        <button class="btn danger" id="deleteBtn" type="button">Excluir nota</button>
+        <p class="status" id="status" role="status"></p>
+      </div>
+    </main>
+  </div>
 
   <footer id="projectFooter">
     Chave Única de Auditoria: <code>P26-2C-F990-4268-1051-46D5</code> · Turma 2C · Licenciado sob MIT
   </footer>
 
+  <script src="/markdown.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

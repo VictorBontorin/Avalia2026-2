@@ -1,27 +1,35 @@
 /**
- * Cloudflare Pages Function — /api/auth/discord/callback
- * Troca o authorization code pelo token de acesso do Discord, obtém o perfil (@me)
- * e persiste no Cloudflare D1 com cookie de sessão.
+ * Cloudflare Pages Function: /api/auth/discord/callback
+ * Validates "state", exchanges the code for a token, reads the Discord profile
+ * (user_id, username, avatar), saves it in D1 and opens a server-side session.
  */
-export async function onRequestGet(context) {
-  const { request, env } = context;
+import { SESSION_TTL, cookie, getCookie, json, randomHex, sha256Hex } from "../../../_lib/auth.js";
+
+function back(origin, query, extraHeaders = []) {
+  const headers = new Headers({ Location: new URL(query, origin).href });
+  for (const value of extraHeaders) headers.append("Set-Cookie", value);
+  return new Response(null, { status: 302, headers });
+}
+
+export async function onRequestGet({ request, env }) {
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
+  const state = url.searchParams.get("state");
   const error = url.searchParams.get("error");
+  const clearState = cookie("oauth_state", "", 0);
 
   if (error || !code) {
-    return Response.redirect(new URL("/?auth_error=" + encodeURIComponent(error || "missing_code"), url.origin).href, 302);
+    return back(url.origin, "/?auth_error=" + encodeURIComponent(error || "missing_code"), [clearState]);
   }
-
+  if (!state || state !== getCookie(request, "oauth_state")) {
+    return back(url.origin, "/?auth_error=invalid_state", [clearState]);
+  }
   if (!env.DISCORD_CLIENT_ID || !env.DISCORD_CLIENT_SECRET) {
-    return Response.json({
-      ok: false,
-      error: "missing_credentials",
-      message: "Defina DISCORD_CLIENT_ID e DISCORD_CLIENT_SECRET nas variáveis do Cloudflare Pages (Settings -> Environment variables).",
-    }, { status: 500 });
+    return json({ ok: false, error: "missing_credentials" }, 500);
   }
-
-  const redirectUri = new URL("/api/auth/discord/callback", url.origin).href;
+  if (!env.DB) {
+    return back(url.origin, "/?auth_error=missing_database", [clearState]);
+  }
 
   try {
     const tokenRes = await fetch("https://discord.com/api/oauth2/token", {
@@ -32,52 +40,43 @@ export async function onRequestGet(context) {
         client_secret: env.DISCORD_CLIENT_SECRET,
         grant_type: "authorization_code",
         code,
-        redirect_uri: redirectUri,
+        redirect_uri: new URL("/api/auth/discord/callback", url.origin).href,
       }),
     });
-
-    if (!tokenRes.ok) {
-      return Response.redirect(new URL("/?auth_error=token_exchange_failed", url.origin).href, 302);
-    }
-
+    if (!tokenRes.ok) return back(url.origin, "/?auth_error=token_exchange_failed", [clearState]);
     const tokenData = await tokenRes.json();
+
     const userRes = await fetch("https://discord.com/api/users/@me", {
       headers: { Authorization: `Bearer ${tokenData.access_token}` },
     });
-
-    if (!userRes.ok) {
-      return Response.redirect(new URL("/?auth_error=fetch_user_failed", url.origin).href, 302);
-    }
-
+    if (!userRes.ok) return back(url.origin, "/?auth_error=fetch_user_failed", [clearState]);
     const discordUser = await userRes.json();
-    const userId = discordUser.id;
-    const username = discordUser.global_name || discordUser.username;
+
+    const userId = String(discordUser.id);
+    const username = String(discordUser.global_name || discordUser.username || "Estudante").slice(0, 80);
     const avatar = discordUser.avatar
       ? `https://cdn.discordapp.com/avatars/${userId}/${discordUser.avatar}.png`
       : "https://cdn.discordapp.com/embed/avatars/0.png";
 
-    if (env.DB) {
-      try {
-        await env.DB.prepare(
-          "CREATE TABLE IF NOT EXISTS discord_users (user_id TEXT PRIMARY KEY, username TEXT NOT NULL, avatar TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
-        ).run();
-        await env.DB.prepare(
-          "INSERT INTO discord_users (user_id, username, avatar, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(user_id) DO UPDATE SET username = excluded.username, avatar = excluded.avatar, updated_at = CURRENT_TIMESTAMP"
-        ).bind(userId, username, avatar).run();
-      } catch {}
-    }
+    const now = Math.floor(Date.now() / 1000);
+    const token = randomHex(32);
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO discord_users (user_id, username, avatar, updated_at)
+         VALUES (?1, ?2, ?3, CURRENT_TIMESTAMP)
+         ON CONFLICT(user_id) DO UPDATE SET username = excluded.username,
+           avatar = excluded.avatar, updated_at = CURRENT_TIMESTAMP`
+      ).bind(userId, username, avatar),
+      env.DB.prepare("DELETE FROM sessions WHERE expires_at < ?1").bind(now),
+      env.DB.prepare("INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?1, ?2, ?3)").bind(
+        await sha256Hex(token),
+        userId,
+        now + SESSION_TTL
+      ),
+    ]);
 
-    const sessionPayload = JSON.stringify({ userId, username, avatar });
-    const encodedSession = btoa(encodeURIComponent(sessionPayload));
-
-    return new Response(null, {
-      status: 302,
-      headers: {
-        Location: "/?login=success",
-        "Set-Cookie": `discord_session=${encodedSession}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400; Secure`,
-      },
-    });
+    return back(url.origin, "/?login=success", [cookie("session", token, SESSION_TTL), clearState]);
   } catch (err) {
-    return Response.redirect(new URL("/?auth_error=exception", url.origin).href, 302);
+    return back(url.origin, "/?auth_error=exception", [clearState]);
   }
 }
